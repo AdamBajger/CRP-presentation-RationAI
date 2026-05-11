@@ -133,15 +133,15 @@ Per-non-linearity rules that preserve the LRP-0 conservation property.
 \begin{column}{0.48\textwidth}
 \begin{exampleblock}{Standard timm ViT (\texttt{vit\_base})}
 \texttt{timm.models.vision\_transformer}\\
-\structure{Pre-norm} block, \alert{no} RoPE, \alert{no} register tokens.\\
-Attention is in-place; canonizer rebinds its forward.
+\structure{Pre-norm} block, \alert{no} RoPE, \alert{no} LayerScale, 1 cls token.\\
+We \alert{substitute} the attention with \texttt{TimmAttentionUnfolded}.
 \end{exampleblock}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{exampleblock}{Eva / DINOv3 (\texttt{vit\_dinov3})}
 \texttt{timm.models.eva.EvaAttention}\\
 \structure{Pre-norm} block, \alert{RoPE} on Q/K, \alert{LayerScale} ($\gamma$), 4 \alert{register tokens} prepended to cls.\\
-We \alert{substitute} the attention class entirely with an unfolded variant.
+We \alert{substitute} the attention with \texttt{EvaAttentionUnfolded}.
 \end{exampleblock}
 \end{column}
 \end{columns}
@@ -149,154 +149,178 @@ We \alert{substitute} the attention class entirely with an unfolded variant.
 \vspace{4mm}
 \begin{itemize}
   \item Both layouts share the high-level chain
-        $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to \mathrm{LayerScale} \to \mathrm{add}_1 \to \mathrm{LN} \to \mathrm{MLP} \to \mathrm{LayerScale} \to \mathrm{add}_2$.
-  \item The unfolded Eva attention exposes \alert{every intermediate tensor as a named submodule},
-        which is the bridge to per-concept conditioning later.
+        $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to \mathrm{LayerScale}? \to \mathrm{add}_1 \to \mathrm{LN} \to \mathrm{MLP} \to \mathrm{LayerScale}? \to \mathrm{add}_2$.
+  \item \alert{Both unfolded variants} expose every intermediate tensor as a named submodule
+        — the bridge to per-concept conditioning later. Both substitution canonizers fire
+        unconditionally; each \texttt{isinstance} filter no-ops on the other's target.
 \end{itemize}
 \end{frame}
 
-% ── Diagram A: standard timm ViT ────────────────────────────────────────────
-\begin{frame}{Diagram A: standard timm ViT block}{One block, \texttt{TimmAttentionForwardCanonizer} active}
+% ── Diagram A: standard timm ViT (horizontal LR layout) ───────────────────
+\begin{frame}{Diagram A: standard timm ViT block}{\texttt{TimmAttentionUnfolded} substituted in by canonizer}
 \centering
-\scalebox{0.78}{
-\begin{tikzpicture}[node distance=4mm and 6mm]
-  % Block-level chain (top-to-bottom)
-  \node[op] (xin) {tokens $\mathbf{x}\in \reals^{B\times N\times D}$};
-  \node[norm, below=of xin] (norm1) {LayerNorm};
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % ── Row 1: attention internals (y around 0, with Q at +2 and K at -2) ──
+  \node[op]    at ( 0,  0)   (xin)    {tokens $\mathbf{x}$ \\ \scriptsize$\reals^{B\times N\times D}$, $N{=}197$};
+  \node[norm]  at ( 2,  0)   (norm1)  {\texttt{norm1}};
+  \node[op]    at ( 4,  0)   (qkv)    {\texttt{qkv}};
+  \node[op]    at ( 6,  0)   (split)  {\texttt{split}};
 
-  % Attention internals (boxed)
-  \node[op, below=of norm1] (qkv) {\texttt{qkv}: $\mathrm{Linear}(D \to 3D)$};
-  \node[op, below=of qkv] (split) {split + reshape \\ to $(B,H,N,d_h)$};
-  \node[op, below left=4mm and 8mm of split] (qnorm) {\texttt{q\_norm}};
-  \node[op, below=of split] (scaleq) {$\times\,d_h^{-1/2}$};
-  \node[op, below right=4mm and 8mm of split] (knorm) {\texttt{k\_norm}};
+  \node[op]    at ( 8,  2.0) (qnorm)  {\texttt{q\_norm}};
+  \node[op]    at ( 8,  0)   (vid)    {\texttt{v\_id}};
+  \node[op]    at ( 8, -2.0) (knorm)  {\texttt{k\_norm}};
 
-  \node[bilin, below=of scaleq] (qk) {\texttt{qk\_scores} \\ $Q\,K^\top$};
-  \node[norm, below=of qk] (sm) {\texttt{softmax}};
-  \node[bilin, below=of sm] (av) {\texttt{context} \\ $\mathrm{attn}\,V$};
-  \node[op, below=of av] (merge) {reshape merge heads};
-  \node[op, below=of merge] (proj) {\texttt{proj}: $\mathrm{Linear}(D\to D)$};
+  \node[op]    at (10,  2.0) (qid)    {\texttt{q\_id}};
+  \node[op]    at (10, -2.0) (kid)    {\texttt{k\_id}};
 
-  % Block residual + MLP
-  \node[add, below=of proj] (add1) {$+$};
-  \node[norm, below=of add1] (norm2) {LayerNorm};
-  \node[op, below=of norm2] (mlp1) {\texttt{mlp.fc1}: $D\to 4D$};
-  \node[op, below=of mlp1] (gelu) {GELU};
-  \node[op, below=of gelu] (mlp2) {\texttt{mlp.fc2}: $4D\to D$};
-  \node[add, below=of mlp2] (add2) {$+$};
-  \node[op, below=of add2] (xout) {output tokens};
+  \node[op]    at (12,  2.0) (scaleq) {\texttt{scale\_q}};
 
-  % Arrows
-  \draw[arrow] (xin) -- (norm1);
+  \node[bilin] at (14,  1.0) (qk)     {\texttt{qk\_scores}};
+  \node[norm]  at (16,  1.0) (sm)     {\texttt{softmax}};
+  \node[bilin] at (18,  0)   (ctx)    {\texttt{context}};
+  \node[op]    at (20,  0)   (rs)     {\texttt{reshape}};
+  \node[op]    at (22,  0)   (proj)   {\texttt{proj}};
+
+  % ── Row 2: residual + MLP (y = -4) ──
+  \node[add]   at ( 0, -4)   (add1)   {$+$};
+  \node[norm]  at ( 2, -4)   (norm2)  {\texttt{norm2}};
+  \node[op]    at ( 4, -4)   (fc1)    {\texttt{fc1}};
+  \node[op]    at ( 6, -4)   (gelu)   {GELU};
+  \node[op]    at ( 8, -4)   (fc2)    {\texttt{fc2}};
+  \node[add]   at (10, -4)   (add2)   {$+$};
+  \node[op]    at (12, -4)   (xout)   {output};
+
+  % ── Arrows ──
+  % main chain into attention
+  \draw[arrow] (xin)   -- (norm1);
   \draw[arrow] (norm1) -- (qkv);
-  \draw[arrow] (qkv) -- (split);
-  \draw[arrow] (split) -- node[font=\tiny, left, xshift=-1mm]{Q} (qnorm.north);
-  \draw[arrow] (split) -- (scaleq) node[font=\tiny, midway, right]{V};
-  \draw[arrow] (split) -- node[font=\tiny, right, xshift=1mm]{K} (knorm.north);
-  \draw[arrow] (qnorm.south) |- (scaleq.west);
-  \draw[arrow] (knorm.south) |- (qk.east);
-  \draw[arrow] (scaleq) -- (qk);
-  \draw[arrow] (qk) -- (sm);
-  \draw[arrow] (sm) -- (av);
-  \draw[arrow] (split.east) .. controls +(2,-3) and +(2,0) .. (av.east) node[pos=0.5, right, font=\tiny]{V};
-  \draw[arrow] (av) -- (merge);
-  \draw[arrow] (merge) -- (proj);
-  \draw[arrow] (proj) -- (add1);
-  \draw[arrow] (xin.east) .. controls +(8,0) and +(8,0) .. (add1.east) node[pos=0.5, right, font=\tiny]{residual};
-  \draw[arrow] (add1) -- (norm2);
-  \draw[arrow] (norm2) -- (mlp1);
-  \draw[arrow] (mlp1) -- (gelu);
-  \draw[arrow] (gelu) -- (mlp2);
-  \draw[arrow] (mlp2) -- (add2);
-  \draw[arrow] (add1.east) .. controls +(8,0) and +(8,0) .. (add2.east) node[pos=0.5, right, font=\tiny]{residual};
-  \draw[arrow] (add2) -- (xout);
+  \draw[arrow] (qkv)   -- (split);
+  % Q/V/K split
+  \draw[arrow] (split.north east) -- node[font=\tiny, sloped, above]{Q} (qnorm.west);
+  \draw[arrow] (split) -- node[font=\tiny, above]{V} (vid);
+  \draw[arrow] (split.south east) -- node[font=\tiny, sloped, below]{K} (knorm.west);
+  % Q track
+  \draw[arrow] (qnorm)  -- (qid);
+  \draw[arrow] (qid)    -- (scaleq);
+  \draw[arrow] (scaleq.east) -- ++(0.4,0) |- (qk.west);
+  % K track  (goes up across V-line to qk)
+  \draw[arrow] (knorm)  -- (kid);
+  \draw[arrow] (kid.east) -- ++(2.6,0) |- (qk.south west);
+  % scores chain
+  \draw[arrow] (qk)     -- (sm);
+  \draw[arrow] (sm.east) -- ++(0.4,0) |- (ctx.north west);
+  % V passes under
+  \draw[arrow] (vid.east) -- node[font=\tiny, above, pos=0.85]{V} (ctx.west);
+  % post-attn
+  \draw[arrow] (ctx)    -- (rs);
+  \draw[arrow] (rs)     -- (proj);
+  % wrap to row 2
+  \draw[arrow] (proj.south) -- ++(0,-1.5) -| (add1.north);
+  % row 2
+  \draw[arrow] (add1)   -- (norm2);
+  \draw[arrow] (norm2)  -- (fc1);
+  \draw[arrow] (fc1)    -- (gelu);
+  \draw[arrow] (gelu)   -- (fc2);
+  \draw[arrow] (fc2)    -- (add2);
+  \draw[arrow] (add2)   -- (xout);
+  % residuals (skips, routed below row 2)
+  \draw[arrow] (xin.west) -- ++(-0.6,0) |- node[font=\tiny, sloped, above, pos=0.25]{residual (ratio)} (add1.west);
+  \draw[arrow] (add1.south) -- ++(0,-0.8) -| (add2.south);
 
-  % Highlight bilinear ops
-  \node[rulebox, fit=(qk)(av), inner xsep=2mm] {};
-\end{tikzpicture}
+  % Unfolded-attention label (below the attention internals)
+  \node[font=\scriptsize\itshape, anchor=north] at (14,-2.7) {\structure{TimmAttentionUnfolded} (substituted in)};
+\end{tikzpicture}%
 }
 
 \vspace{2mm}
-\scriptsize \alert{Yellow box}: bilinear matmuls — receive the AttnLRP bilinear rule.
-\structure{Green}: normalisations — identity rule. \structure{Blue}: linears — $\eps$-LRP via \texttt{zennit}.
+\scriptsize \alert{Red}: bilinear matmuls — AlphaBeta bilinear rule.
+\structure{Green}: normalisations — identity rule. \structure{Blue}: linears — $\eps$-LRP.
+The \texttt{q\_id}/\texttt{k\_id}/\texttt{v\_id} identities exist solely as concept hook points.
 \end{frame}
 
-% ── Diagram B: Eva DINOv3 ─────────────────────────────────────────────────
+% ── Diagram B: Eva / DINOv3 (horizontal LR layout) ────────────────────────
 \begin{frame}{Diagram B: Eva / DINOv3 block (unfolded attention)}{\texttt{EvaAttentionUnfolded} substituted in by canonizer}
 \centering
-\scalebox{0.74}{
-\begin{tikzpicture}[node distance=3mm and 5mm]
-  % Block-level chain
-  \node[op] (xin) {tokens $\mathbf{x}\in\reals^{B\times N\times D}$ \\ \scriptsize$N=261$ ($\mathrm{cls}+4\,\mathrm{reg}+256\,\mathrm{patch}$)};
-  \node[norm, below=of xin] (norm1) {\texttt{norm1} (LayerNorm)};
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[x=1cm, y=1cm]
+  % ── Row 1: attention internals ──
+  \node[op]    at ( 0,  0)    (xin)    {tokens $\mathbf{x}$ \\ \scriptsize$\reals^{B\times N\times D}$, $N{=}261$};
+  \node[norm]  at ( 2,  0)    (norm1)  {\texttt{norm1}};
+  \node[op]    at ( 4,  0)    (qkv)    {\texttt{qkv}};
+  \node[op]    at ( 6,  0)    (split)  {\texttt{split}};
 
-  % Eva attention internals (named submodules)
-  \node[op, below=of norm1] (qkv) {\texttt{qkv}};
-  \node[op, below=of qkv] (split) {\texttt{split} \\ \texttt{ChunkAlongLastDim(3)}};
+  \node[op]    at ( 8,  2.0)  (qnorm)  {\texttt{q\_norm}};
+  \node[op]    at ( 8,  0)    (vid)    {\texttt{v\_id}};
+  \node[op]    at ( 8, -2.0)  (knorm)  {\texttt{k\_norm}};
 
-  \node[op, below left=3mm and 12mm of split] (qnorm) {\texttt{q\_norm}};
-  \node[op, below=of split] (vid) {\texttt{v\_id} \\ (Identity, hookable)};
-  \node[op, below right=3mm and 12mm of split] (knorm) {\texttt{k\_norm}};
+  \node[op]    at (10,  2.0)  (rq)     {\texttt{rope\_q}};
+  \node[op]    at (10, -2.0)  (rk)     {\texttt{rope\_k}};
 
-  \node[op, below=of qnorm] (rq) {\texttt{rope\_q}};
-  \node[op, below=of knorm] (rk) {\texttt{rope\_k}};
+  \node[op]    at (12,  2.0)  (sq)     {\texttt{scale\_q}};
 
-  \node[op, below=of rq] (sq) {\texttt{scale\_q}};
+  \node[bilin] at (14,  1.0)  (qk)     {\texttt{qk\_scores}};
+  \node[op]    at (15.6,1.0)  (mask)   {\texttt{add\_mask}};
+  \node[norm]  at (17.2,1.0)  (sm)     {\texttt{softmax}};
+  \node[bilin] at (19,  0)    (ctx)    {\texttt{context}};
+  \node[op]    at (21,  0)    (rs)     {\texttt{reshape}};
+  \node[norm]  at (23,  0)    (n)      {\texttt{norm}};
+  \node[op]    at (25,  0)    (proj)   {\texttt{proj}};
+  \node[op]    at (27,  0)    (ls1)    {\texttt{ls1}: $\gamma_1\cdot$};
 
-  \node[bilin, below=of vid, yshift=-2mm] (qk) {\texttt{qk\_scores} = $Q\,K^\top$};
-  \node[op, below=of qk] (mask) {\texttt{add\_mask}};
-  \node[norm, below=of mask] (sm) {\texttt{softmax}};
-  \node[bilin, below=of sm] (av) {\texttt{context} = $\mathrm{attn}\,V$};
-  \node[op, below=of av] (rs) {\texttt{reshape}};
-  \node[op, below=of rs] (n) {\texttt{norm} (post-attn LN)};
-  \node[op, below=of n] (proj) {\texttt{proj}};
+  % ── Row 2: residual + MLP + LayerScale ──
+  \node[add]   at ( 0, -4)    (add1)   {$+$};
+  \node[norm]  at ( 2, -4)    (norm2)  {\texttt{norm2}};
+  \node[op]    at ( 4, -4)    (fc1)    {\texttt{mlp.fc1}};
+  \node[op]    at ( 6, -4)    (gelu)   {GELU};
+  \node[op]    at ( 8, -4)    (fc2)    {\texttt{mlp.fc2}};
+  \node[op]    at (10, -4)    (ls2)    {\texttt{ls2}: $\gamma_2\cdot$};
+  \node[add]   at (12, -4)    (add2)   {$+$};
+  \node[op]    at (14, -4)    (xout)   {output};
 
-  % Block residual + LayerScale + MLP
-  \node[op, below=of proj] (ls1) {\texttt{ls1}: $\gamma_1\cdot$};
-  \node[add, below=of ls1] (add1) {$+$};
-  \node[norm, below=of add1] (norm2) {\texttt{norm2}};
-  \node[op, below=of norm2] (mlp1) {\texttt{mlp.fc1}};
-  \node[op, below=of mlp1] (gelu) {GELU};
-  \node[op, below=of gelu] (mlp2) {\texttt{mlp.fc2}};
-  \node[op, below=of mlp2] (ls2) {\texttt{ls2}: $\gamma_2\cdot$};
-  \node[add, below=of ls2] (add2) {$+$};
-  \node[op, below=of add2] (xout) {output tokens};
-
-  % Arrows
-  \draw[arrow] (xin) -- (norm1);
+  % ── Arrows ──
+  \draw[arrow] (xin)   -- (norm1);
   \draw[arrow] (norm1) -- (qkv);
-  \draw[arrow] (qkv) -- (split);
-  \draw[arrow] (split.south west) -- node[font=\tiny, above, sloped]{Q} (qnorm.north);
-  \draw[arrow] (split.south) -- node[font=\tiny, right]{V} (vid.north);
-  \draw[arrow] (split.south east) -- node[font=\tiny, above, sloped]{K} (knorm.north);
+  \draw[arrow] (qkv)   -- (split);
+  \draw[arrow] (split.north east) -- node[font=\tiny, sloped, above]{Q} (qnorm.west);
+  \draw[arrow] (split) -- node[font=\tiny, above]{V} (vid);
+  \draw[arrow] (split.south east) -- node[font=\tiny, sloped, below]{K} (knorm.west);
   \draw[arrow] (qnorm) -- (rq);
+  \draw[arrow] (rq)    -- (sq);
+  \draw[arrow] (sq.east) -- ++(0.4,0) |- (qk.west);
   \draw[arrow] (knorm) -- (rk);
-  \draw[arrow] (rq) -- (sq);
-  \draw[arrow] (sq.south) |- ([yshift=2mm]qk.west) -- (qk.west);
-  \draw[arrow] (rk.south) |- ([yshift=2mm]qk.east) -- (qk.east);
-  \draw[arrow] (qk) -- (mask);
-  \draw[arrow] (mask) -- (sm);
-  \draw[arrow] (sm) -- (av);
-  \draw[arrow] (vid.east) .. controls +(2,-1) and +(2,0) .. (av.east) node[font=\tiny, midway, right]{V};
-  \draw[arrow] (av) -- (rs);
-  \draw[arrow] (rs) -- (n);
-  \draw[arrow] (n) -- (proj);
-  \draw[arrow] (proj) -- (ls1);
-  \draw[arrow] (ls1) -- (add1);
-  \draw[arrow] (xin.west) .. controls +(-7,0) and +(-7,0) .. (add1.west) node[font=\tiny, midway, left]{residual (ratio rule)};
-  \draw[arrow] (add1) -- (norm2);
-  \draw[arrow] (norm2) -- (mlp1);
-  \draw[arrow] (mlp1) -- (gelu);
-  \draw[arrow] (gelu) -- (mlp2);
-  \draw[arrow] (mlp2) -- (ls2);
-  \draw[arrow] (ls2) -- (add2);
-  \draw[arrow] (add1.west) .. controls +(-7,0) and +(-7,0) .. (add2.west);
-  \draw[arrow] (add2) -- (xout);
+  \draw[arrow] (rk.east) -- ++(2.6,0) |- (qk.south west);
+  \draw[arrow] (qk)    -- (mask);
+  \draw[arrow] (mask)  -- (sm);
+  \draw[arrow] (sm.east) -- ++(0.4,0) |- (ctx.north west);
+  \draw[arrow] (vid.east) -- node[font=\tiny, above, pos=0.9]{V} (ctx.west);
+  \draw[arrow] (ctx)   -- (rs);
+  \draw[arrow] (rs)    -- (n);
+  \draw[arrow] (n)     -- (proj);
+  \draw[arrow] (proj)  -- (ls1);
+  % wrap to row 2
+  \draw[arrow] (ls1.south) -- ++(0,-1.5) -| (add1.north);
+  % row 2
+  \draw[arrow] (add1)  -- (norm2);
+  \draw[arrow] (norm2) -- (fc1);
+  \draw[arrow] (fc1)   -- (gelu);
+  \draw[arrow] (gelu)  -- (fc2);
+  \draw[arrow] (fc2)   -- (ls2);
+  \draw[arrow] (ls2)   -- (add2);
+  \draw[arrow] (add2)  -- (xout);
+  % residuals
+  \draw[arrow] (xin.west) -- ++(-0.6,0) |- node[font=\tiny, sloped, above, pos=0.25]{residual (ratio)} (add1.west);
+  \draw[arrow] (add1.south) -- ++(0,-0.8) -| (add2.south);
 
-  % Highlight unfolded attention
-  \node[rulebox, fit=(qkv)(proj), inner xsep=2mm, label={right:\tiny\structure{\texttt{EvaAttentionUnfolded}}}] {};
-\end{tikzpicture}
+  % Unfolded-attention label
+  \node[font=\scriptsize\itshape, anchor=north] at (15,-2.7) {\structure{EvaAttentionUnfolded} (substituted in)};
+\end{tikzpicture}%
 }
+
+\vspace{2mm}
+\scriptsize Adds \texttt{rope\_q}/\texttt{rope\_k} (RoPE), \texttt{add\_mask} (attention bias),
+\texttt{norm} (post-attention LN), and \texttt{ls1}/\texttt{ls2} (LayerScale) compared to Diagram~A.
+$N{=}261$ from \alert{cls $+$ 4 register $+$ 256 patch} tokens.
 \end{frame}
 
 \begin{frame}{Hookable submodule names}{Cheat sheet — referenced on every Concept slide}
@@ -308,8 +332,8 @@ Submodule path & Tensor shape & Used by Concept \\
 \texttt{blocks.\{i\}.attn.qk\_scores}     & $(B,H,N,N)$ & — (rule target only) \\
 \texttt{blocks.\{i\}.attn.softmax}        & $(B,H,N,N)$ & — \\
 \texttt{blocks.\{i\}.attn.context}        & $(B,H,N,d_h)$ & \alert{HeadConcept} \\
-\texttt{blocks.\{i\}.attn.rope\_q}        & $(B,H,N,d_h)$ & \alert{QConcept} \\
-\texttt{blocks.\{i\}.attn.rope\_k}        & $(B,H,N,d_h)$ & \alert{KConcept} \\
+\texttt{blocks.\{i\}.attn.rope\_q} / \texttt{q\_id}\,$\dagger$    & $(B,H,N,d_h)$ & \alert{QConcept} \\
+\texttt{blocks.\{i\}.attn.rope\_k} / \texttt{k\_id}\,$\dagger$    & $(B,H,N,d_h)$ & \alert{KConcept} \\
 \texttt{blocks.\{i\}.attn.v\_id}          & $(B,H,N,d_h)$ & \alert{VConcept} \\
 \texttt{blocks.\{i\}.attn.proj\_drop}     & $(B,N,D)$    & \alert{AttnOutputDimConcept} \\
 \texttt{blocks.\{i\}.attn.proj\_drop}     & $(B,N,D)$    & \alert{RegisterTokenConcept} \\
@@ -320,9 +344,10 @@ Submodule path & Tensor shape & Used by Concept \\
 \end{tabular}
 
 \vspace{3mm}
-\scriptsize Two concepts share \texttt{proj\_drop} but condition on disjoint token ranges:
-\alert{AttnOutputDimConcept} on patch tokens $[\,5{:}N\,]$,
-\alert{RegisterTokenConcept} on prefix $[\,0{:}5\,]$ (cls + 4 register).
+\scriptsize $\dagger$ \texttt{rope\_q}/\texttt{rope\_k} on Eva (DINOv3); \texttt{q\_id}/\texttt{k\_id} on standard timm (post-norm identity placeholders).\\
+Two concepts share \texttt{proj\_drop} but condition on disjoint token ranges:
+\alert{AttnOutputDimConcept} on patch tokens $[\,N_{\mathrm{pref}}{:}N\,]$,
+\alert{RegisterTokenConcept} on prefix $[\,0{:}N_{\mathrm{pref}}\,]$ — $N_{\mathrm{pref}}{=}5$ on DINOv3 (cls $+$ 4 register), $N_{\mathrm{pref}}{=}1$ on vit\_base (cls only).
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -340,8 +365,7 @@ Module class & Rule (canonizer) & Reference \\
 \texttt{nn.LayerNorm}               & Stop-grad on std + identity & AttnLRP \S 3.2.2 \\
 \texttt{SoftmaxAlongLastDim}        & \alert{SoftmaxIdentityCanonizer}  & AttnLRP Eq.~9 \\
 \texttt{ScaleByConstant}            & \alert{ScaleByConstantIdentityCanonizer} & graph-constant identity \\
-\texttt{BilinearMatmul} (1)         & \alert{BilinearMatmulFactor2Canonizer}   & AttnLRP Prop.~3.3 \\
-\texttt{BilinearMatmul} (2)         & \alert{BilinearMatmulAlphaBetaCanonizer} & Bach 2015 $\to$ bilinear \\
+\texttt{BilinearMatmul}             & \alert{BilinearMatmulAlphaBetaCanonizer} & Bach 2015 $\to$ bilinear \\
 \texttt{ResidualAdd}                & \alert{ResidualRatioCanonizer}    & Otsuki ratio split \\
 \texttt{LayerScaleMul}              & \alert{LayerScaleUniformCanonizer} & AttnLRP Eq.~7 \\
 \bottomrule
@@ -393,32 +417,9 @@ when $f$ contributed to the output ($|y_i|\gg\eps$).
 Conservation: $\sum \Rel_i = \sum \Rel^{\mathrm{out}}_i$ exact; relevance flows freely through the normalisation.
 \end{frame}
 
-\begin{frame}{Bilinear rule \#1: AttnLRP Prop.~3.3 ($2y+\eps$)}{For \texttt{qk\_scores} and \texttt{context}}
-For $Y = A\,B$:
-\[
-  \mathrm{scaled} = \frac{\Rel_Y}{2Y + \eps\cdot\mathrm{sign}(Y)},
-  \quad
-  \Rel_A = A \odot (\mathrm{scaled}\, B^\top),
-  \quad
-  \Rel_B = B \odot (A^\top\, \mathrm{scaled})
-\]
-\begin{itemize}
-  \item \alert{Mandatory operand multiplication} (\structure{$A\odot$}, \structure{$B\odot$})
-        — earlier buggy version (no operand $\odot$) over-divided by ${\sim}10^{29}$ across 24 blocks.
-  \item Conservation: $\sum \Rel_A + \sum \Rel_B \approx \sum \Rel_Y$ (the $2Y$ denominator splits
-        each upstream relevance evenly across the two bilinear chains).
-  \item Replaces the operand-side \texttt{divide\_gradient($\cdot$, factor)} calls used
-        by stock-timm $\eps$-LRP attention.
-\end{itemize}
-
-\begin{exampleblock}{In code}
-\texttt{BilinearMatmulFactor2Canonizer} (line 680 of \texttt{attention\_unfolded.py})
-rebinds \texttt{BilinearMatmul.forward} to route through \texttt{\_MatmulFactor2Fn.apply(\ldots)}.
-\end{exampleblock}
-\end{frame}
-
-\begin{frame}{Bilinear rule \#2: AlphaBeta on bilinear}{Bach 2015 generalised; the validated default}
-Sign-decompose operands: $A^\pm = \max/\min(A, 0)$, similarly $B^\pm$.
+\begin{frame}{Bilinear rule: AlphaBeta on bilinear}{Bach 2015 generalised; the project's single bilinear rule}
+For $Y = A\,B$ — the \texttt{qk\_scores} and \texttt{context} matmuls — sign-decompose operands:
+$A^\pm = \max/\min(A, 0)$, similarly $B^\pm$. Then
 \[
   Y^+ = A^+B^+ + A^-B^- \;(\geq 0), \qquad
   Y^- = A^+B^- + A^-B^+ \;(\leq 0)
@@ -433,11 +434,18 @@ Define stabilised ratios $F = \Rel_Y/(Y^+ + \eps)$, $G = \Rel_Y/(Y^- - \eps)$. T
 \begin{itemize}
   \item \alert{Conservation}: $\sum \Rel_A + \sum \Rel_B = (\alpha+\beta)\,\sum \Rel_Y$;
         with $\alpha+\beta = 1$, exact modulo $\eps$.
-  \item \alert{Why not just Prop.\ 3.3?} On near-orthogonal $Q,K$ with $|2Y|\sim\eps$ in many
-        positions, the factor-2 rule's \texttt{LRP-0 Case~B} cancellation amplifies relevance by
-        $\sim 10^{20}$. Sign-splitting denominators avoid this structurally.
+  \item \alert{Why not AttnLRP Prop.\ 3.3 ($2y+\eps$)?} On near-orthogonal $Q,K$ with $|2Y|\sim\eps$
+        in many positions, the factor-2 rule's \texttt{LRP-0 Case~B} cancellation amplifies relevance
+        by $\sim 10^{20}$. Sign-splitting denominators avoid this structurally — so we ship only
+        AlphaBeta and have deleted the factor-2 variant.
   \item \alert{Default}: $\alpha=0.5,\ \beta=0.5$ — balanced, tightest magnitude control.
 \end{itemize}
+
+\begin{exampleblock}{In code}
+\texttt{BilinearMatmulAlphaBetaCanonizer} rebinds \texttt{BilinearMatmul.forward} to route
+through \texttt{\_AlphaBetaMatmulFn.apply(\ldots)}. Fires on both \texttt{qk\_scores} and
+\texttt{context} of every unfolded block (Eva and timm).
+\end{exampleblock}
 \end{frame}
 
 \begin{frame}{Residual rule: Otsuki ratio split}{For \texttt{add1} and \texttt{add2} in Diagram~B}
@@ -494,7 +502,6 @@ Rule & Conservation & Comment \\
 $\eps$-LRP on Linear            & $\sum \Rel_i = \sum \Rel_j$ mod $\eps$ & exact \\
 Identity (softmax / LN / GELU)  & $\sum \Rel_i = \sum \Rel_j$ exact      & $\Rel$ passes through \\
 ScaleByConstant identity        & $\Rel_x = \Rel_y$ exact                 & constant absorbs none \\
-Bilinear $2y+\eps$              & $\sum \Rel_A + \sum \Rel_B \approx \sum \Rel_Y$ & even $A/B$ split \\
 Bilinear AlphaBeta              & $= (\alpha+\beta)\sum \Rel_Y$         & exact when $\alpha+\beta=1$ \\
 Residual ratio                  & $\sum \Rel_x + \sum \Rel_b \approx \sum \Rel_y$ & magnitude-weighted \\
 LayerScale uniform              & $\Rel_{\mathrm{branch}} = \half \Rel_y$ & $\gamma$ absorbs the rest \\
@@ -537,29 +544,29 @@ Both types are reversible — composite \texttt{context()} guarantees state rest
 \toprule
 Canonizer & Target & Effect \\
 \midrule
-\multicolumn{3}{l}{\textbf{In \texttt{crp/transformer\_patches.py} (stock-timm rebinds):}} \\
+\multicolumn{3}{l}{\textbf{In \texttt{crp/transformer\_patches.py} (block-level rebinds):}} \\
 \texttt{LayerNormForwardCanonizer}     & \texttt{nn.LayerNorm}                 & stop-grad on std + identity rule on affine \\
 \texttt{GELUIdentityRuleCanonizer}     & \texttt{nn.GELU}                       & identity rule (Eq.~9) \\
 \texttt{DropoutPassthroughCanonizer}   & \texttt{nn.Dropout}                    & disable dropout for backward \\
-\texttt{TimmAttentionForwardCanonizer} & \texttt{vit.Attention}                 & rebind to \texttt{\_timm\_attention\_forward} \\
 \texttt{TimmBlockResidualCanonizer}    & \texttt{vit.Block}                     & rebind block fwd to apply ratio rule on residuals \\
 \texttt{EvaBlockResidualCanonizer}     & \texttt{eva.EvaBlock}                  & rebind block fwd; LayerScale uniform + ratio residual \\
 \texttt{VitPosEmbedPALRPCanonizer}     & \texttt{VisionTransformer}             & PA-LRP on the \texttt{x + pos\_embed} step \\
 \midrule
-\multicolumn{3}{l}{\textbf{In \texttt{crp/attention\_unfolded.py} (rule canonizers + substitution):}} \\
-\texttt{EvaAttentionSubstitutionCanonizer} & \texttt{eva.EvaAttention}          & substitute with \texttt{EvaAttentionUnfolded} \\
-\texttt{BilinearMatmulFactor2Canonizer}    & \texttt{BilinearMatmul}            & wrap forward in \texttt{\_MatmulFactor2Fn} \\
-\texttt{BilinearMatmulAlphaBetaCanonizer}  & \texttt{BilinearMatmul}            & wrap forward in \texttt{\_AlphaBetaMatmulFn} \\
-\texttt{SoftmaxIdentityCanonizer}          & \texttt{SoftmaxAlongLastDim}       & wrap forward in \texttt{\_SoftmaxIdentityRuleFn} \\
-\texttt{ScaleByConstantIdentityCanonizer}  & \texttt{ScaleByConstant}           & wrap forward in \texttt{\_ScaleIdentityRuleFn} \\
-\texttt{ResidualRatioCanonizer}            & \texttt{ResidualAdd}               & wrap forward in \texttt{\_ResidualRatioFn} \\
-\texttt{LayerScaleUniformCanonizer}        & \texttt{LayerScaleMul}             & wrap forward to apply \texttt{\_DivideGradientFn($\cdot$,2)} \\
+\multicolumn{3}{l}{\textbf{In \texttt{crp/attention\_unfolded.py} (substitution + rule canonizers):}} \\
+\texttt{EvaAttentionSubstitutionCanonizer}  & \texttt{eva.EvaAttention}         & substitute with \texttt{EvaAttentionUnfolded} \\
+\texttt{TimmAttentionSubstitutionCanonizer} & \texttt{vit.Attention}            & substitute with \texttt{TimmAttentionUnfolded} \\
+\texttt{BilinearMatmulAlphaBetaCanonizer}   & \texttt{BilinearMatmul}           & wrap forward in \texttt{\_AlphaBetaMatmulFn} \\
+\texttt{SoftmaxIdentityCanonizer}           & \texttt{SoftmaxAlongLastDim}      & wrap forward in \texttt{\_SoftmaxIdentityRuleFn} \\
+\texttt{ScaleByConstantIdentityCanonizer}   & \texttt{ScaleByConstant}          & wrap forward in \texttt{\_ScaleIdentityRuleFn} \\
+\texttt{ResidualRatioCanonizer}             & \texttt{ResidualAdd}              & wrap forward in \texttt{\_ResidualRatioFn} \\
+\texttt{LayerScaleUniformCanonizer}         & \texttt{LayerScaleMul}            & wrap forward to apply \texttt{\_DivideGradientFn($\cdot$,2)} \\
 \bottomrule
 \end{tabular}
 
 \vspace{2mm}
-The aggregator \texttt{TimmViTCanonizer} bundles the stock-timm rebinds (top half) — different flag
-combinations enable PA-LRP, residual rule, LayerScale handling.
+Both substitution canonizers fire unconditionally — each \texttt{isinstance} filter no-ops on the
+other's target. The aggregator \texttt{TimmViTCanonizer} bundles the block-level rebinds (top half);
+PA-LRP and residual / LayerScale handling are flag-controlled.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -571,10 +578,8 @@ combinations enable PA-LRP, residual rule, LayerScale handling.
 {\small
 \begin{verbatim}
 composite = AttnLRPCombinedComposite(
-    matmul_factor_2=True,
-    use_unfolded_attention=True,
     alpha=0.5, beta=0.5,
-    layerscale_uniform=True,
+    layerscale_uniform=True,    # no-op on vit_base (no LayerScale)
     residual_lrp='ratio',
 )
 \end{verbatim}
@@ -586,15 +591,16 @@ composite = AttnLRPCombinedComposite(
   \item \alert{layer\_map}: \texttt{nn.Linear} / \texttt{nn.Conv2d} $\to$ \texttt{Epsilon($\eps=10^{-6}$)};
         GELU/LN/Dropout/Identity $\to$ \texttt{Pass} (handled by canonizers).
   \item \alert{TimmViTCanonizer} bundles: \texttt{LayerNormForwardCanonizer}, \texttt{GELUIdentityRuleCanonizer},
-        \texttt{DropoutPassthroughCanonizer}, \texttt{TimmAttentionForwardCanonizer},
+        \texttt{DropoutPassthroughCanonizer},
         \texttt{EvaBlockResidualCanonizer(residual\_rule='ratio', layerscale\_uniform=True)}.
-  \item \alert{EvaAttentionSubstitutionCanonizer(block\_indices=None)}: substitute \alert{all} blocks.
+  \item \alert{EvaAttentionSubstitutionCanonizer} $+$ \alert{TimmAttentionSubstitutionCanonizer}:
+        both always-on, each \texttt{isinstance} filter no-ops on the other's target.
   \item \alert{BilinearMatmulAlphaBetaCanonizer($\alpha=0.5,\beta=0.5$)} on every \texttt{BilinearMatmul}.
   \item \alert{SoftmaxIdentityCanonizer} on every \texttt{SoftmaxAlongLastDim}.
   \item \alert{ScaleByConstantIdentityCanonizer} on every \texttt{ScaleByConstant}.
 \end{itemize}
 
-\centering\scriptsize \alert{Net effect}: 24-block DINOv3 ViT-L receives the validated AlphaBeta $+$ ratio-residual $+$ uniform-LayerScale recipe.
+\centering\scriptsize \alert{Net effect}: any supported ViT (24-block Eva DINOv3 or 12-block timm vit\_base) receives the validated AlphaBeta $+$ ratio-residual $+$ uniform-LayerScale recipe — uniformly.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
