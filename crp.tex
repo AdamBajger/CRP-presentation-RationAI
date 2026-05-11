@@ -14,12 +14,8 @@
 \usepackage{expl3,biblatex}
 \addbibresource{crp.bib}
 \usepackage{booktabs}
-\usepackage{amsmath, amssymb}
 \usepackage{tikz}
-\usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc, decorations.pathreplacing}
-\usepackage{pifont}
-\newcommand{\cmark}{\ding{51}}
-\newcommand{\xmark}{\ding{55}}
+\usetikzlibrary{positioning, arrows.meta, shapes.geometric, fit, backgrounds, calc}
 
 \usetheme[
   workplace=fi,
@@ -40,10 +36,11 @@
   rulebox/.style = {draw, dashed, rounded corners, inner sep=4pt, fill=yellow!10, font=\tiny},
 }
 
-% Acronyms and short commands
+% Acronyms and short commands. Vanilla LaTeX only — no amsmath/amssymb.
 \newcommand{\eps}{\varepsilon}
-\newcommand{\R}{\mathcal{R}}
-\newcommand{\softmax}{\operatorname{softmax}}
+\newcommand{\Rel}{\mathcal{R}}      % avoid clash with packages that claim \R
+\newcommand{\half}{\frac{1}{2}}     % stand-in for \tfrac12 (amsmath)
+\newcommand{\reals}{\mathbf{R}}     % stand-in for \mathbb{R} (amssymb)
 
 \title[CRP for ViTs]{Concept Relevance Propagation for Vision Transformers}
 \subtitle[AttnLRP $\to$ CRP, code-grounded]{Rules, canonizers, and concept classes \\ in our \texttt{zennit-crp} extension}
@@ -93,16 +90,16 @@ The walkthrough notebook follows after these slides.
 \begin{block}{LRP-0 (Bach et al.\ 2015)}
 For $y_j = \sum_i w_{ij}\, x_i + b_j$:
 \[
-  \R_i = \sum_j \frac{w_{ij}\, x_i}{\sum_k w_{kj}\, x_k}\, \R_j
-  \quad\text{(linear layers, exact conservation)}
+  \Rel_i = \sum_j \frac{w_{ij}\, x_i}{\sum_k w_{kj}\, x_k}\, \Rel_j
+  \quad\mbox{(linear layers, exact conservation)}
 \]
 \end{block}
 \begin{block}{$\eps$-LRP (stabilised)}
 \[
-  \R_i = \sum_j \frac{w_{ij}\, x_i}{\eps\cdot \mathrm{sign}(z_j) + z_j}\, \R_j,
+  \Rel_i = \sum_j \frac{w_{ij}\, x_i}{\eps\cdot \mathrm{sign}(z_j) + z_j}\, \Rel_j,
   \qquad z_j = \sum_i w_{ij}\, x_i
 \]
-$\eps$ kills small-denominator amplification; conservation $\sum \R_i \approx \sum \R_j$ within $\eps$.
+$\eps$ kills small-denominator amplification; conservation $\sum \Rel_i \approx \sum \Rel_j$ within $\eps$.
 \end{block}
 
 \begin{itemize}
@@ -156,8 +153,8 @@ We \alert{substitute} the attention class entirely with an unfolded variant.
 
 \vspace{4mm}
 \begin{itemize}
-  \item Both layouts: $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to (\mathrm{LayerScale}) \to \mathrm{add\_residual}
-        \to \mathrm{LN} \to \mathrm{MLP} \to (\mathrm{LayerScale}) \to \mathrm{add\_residual}$
+  \item Both layouts share the high-level chain
+        $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to \mathrm{LayerScale} \to \mathrm{add}_1 \to \mathrm{LN} \to \mathrm{MLP} \to \mathrm{LayerScale} \to \mathrm{add}_2$.
   \item The unfolded Eva attention exposes \alert{every intermediate tensor as a named submodule},
         which is the bridge to per-concept conditioning later.
 \end{itemize}
@@ -169,7 +166,7 @@ We \alert{substitute} the attention class entirely with an unfolded variant.
 \scalebox{0.78}{
 \begin{tikzpicture}[node distance=4mm and 6mm]
   % Block-level chain (top-to-bottom)
-  \node[op] (xin) {tokens $\mathbf{x}\in \mathbb{R}^{B\times N\times D}$};
+  \node[op] (xin) {tokens $\mathbf{x}\in \reals^{B\times N\times D}$};
   \node[norm, below=of xin] (norm1) {LayerNorm};
 
   % Attention internals (boxed)
@@ -235,7 +232,7 @@ We \alert{substitute} the attention class entirely with an unfolded variant.
 \scalebox{0.74}{
 \begin{tikzpicture}[node distance=3mm and 5mm]
   % Block-level chain
-  \node[op] (xin) {tokens $\mathbf{x}\in\mathbb{R}^{B\times N\times D}$ \\ \scriptsize$N=261$ ($\mathrm{cls}+4\,\mathrm{reg}+256\,\mathrm{patch}$)};
+  \node[op] (xin) {tokens $\mathbf{x}\in\reals^{B\times N\times D}$ \\ \scriptsize$N=261$ ($\mathrm{cls}+4\,\mathrm{reg}+256\,\mathrm{patch}$)};
   \node[norm, below=of xin] (norm1) {\texttt{norm1} (LayerNorm)};
 
   % Eva attention internals (named submodules)
@@ -367,14 +364,14 @@ On context-exit the original forward is restored.
 \begin{frame}{$\eps$-LRP for linears (\texttt{zennit.Epsilon})}{The workhorse}
 For $z_j = \sum_i w_{ij}\, x_i + b_j$ inside an \texttt{nn.Linear}:
 \[
-  \R_i = \sum_j \frac{w_{ij}\, x_i}{\eps\cdot\mathrm{sign}(z_j) + z_j}\, \R_j
+  \Rel_i = \sum_j \frac{w_{ij}\, x_i}{\eps\cdot\mathrm{sign}(z_j) + z_j}\, \Rel_j
 \]
 
 \begin{itemize}
   \item Applied to all \texttt{nn.Linear} and \texttt{nn.Conv2d} via the layer\_map.
   \item In the unfolded Eva attention: \texttt{qkv}, \texttt{proj}, \texttt{q\_norm} (if affine),
         \texttt{k\_norm} (if affine), \texttt{mlp.fc1}, \texttt{mlp.fc2}.
-  \item Conservation: $\sum \R_i = \sum \R_j$ exactly modulo $\eps$.
+  \item Conservation: $\sum \Rel_i = \sum \Rel_j$ exactly modulo $\eps$.
   \item $\gamma$-LRP variant available via \texttt{AttnLRPGammaComposite} (biases relevance toward positive contributions).
 \end{itemize}
 \end{frame}
@@ -382,38 +379,38 @@ For $z_j = \sum_i w_{ij}\, x_i + b_j$ inside an \texttt{nn.Linear}:
 \begin{frame}{Identity rule for normalisations (AttnLRP Eq.~9)}{Softmax, GELU, LayerNorm, ScaleByConstant}
 For an element-wise non-linearity $y_i = f(x_i)$, the LRP-0 derivation reduces to:
 \[
-  \R_i = \frac{y_i}{\eps\cdot\mathrm{sign}(y_i) + y_i}\, \R^{\mathrm{out}}_i
-  \;\approx\; \R^{\mathrm{out}}_i
+  \Rel_i = \frac{y_i}{\eps\cdot\mathrm{sign}(y_i) + y_i}\, \Rel^{\mathrm{out}}_i
+  \;\approx\; \Rel^{\mathrm{out}}_i
 \]
 when $f$ contributed to the output ($|y_i|\gg\eps$).
 
 \begin{block}{Where it fires}
 \begin{itemize}
   \item \texttt{SoftmaxAlongLastDim} (the \texttt{softmax} node in Diagram~B):
-        $\R^{\mathrm{scores}} = \R^{\mathrm{attn}}$ — softmax does NOT route relevance through its Jacobian.
+        $\Rel^{\mathrm{scores}} = \Rel^{\mathrm{attn}}$ — softmax does NOT route relevance through its Jacobian.
   \item \texttt{nn.LayerNorm} (\texttt{norm1}, \texttt{norm2}): forward is rebound to use
         \texttt{stop\_gradient(std)}, then identity rule on the affine output.
   \item \texttt{nn.GELU}: same $f(y)/y$ stabilised ratio.
-  \item \texttt{ScaleByConstant} (\texttt{scale\_q}, $d_h^{-1/2}$): $\R_x = \R_y$ — constant has no upstream input.
+  \item \texttt{ScaleByConstant} (\texttt{scale\_q}, $d_h^{-1/2}$): $\Rel_x = \Rel_y$ — constant has no upstream input.
 \end{itemize}
 \end{block}
 
-Conservation: $\sum \R_i = \sum \R^{\mathrm{out}}_i$ exact; relevance flows freely through the normalisation.
+Conservation: $\sum \Rel_i = \sum \Rel^{\mathrm{out}}_i$ exact; relevance flows freely through the normalisation.
 \end{frame}
 
 \begin{frame}{Bilinear rule \#1: AttnLRP Prop.~3.3 ($2y+\eps$)}{For \texttt{qk\_scores} and \texttt{context}}
 For $Y = A\,B$:
 \[
-  \mathrm{scaled} = \frac{\R_Y}{2Y + \eps\cdot\mathrm{sign}(Y)},
+  \mathrm{scaled} = \frac{\Rel_Y}{2Y + \eps\cdot\mathrm{sign}(Y)},
   \quad
-  \R_A = A \odot (\mathrm{scaled}\, B^\top),
+  \Rel_A = A \odot (\mathrm{scaled}\, B^\top),
   \quad
-  \R_B = B \odot (A^\top\, \mathrm{scaled})
+  \Rel_B = B \odot (A^\top\, \mathrm{scaled})
 \]
 \begin{itemize}
   \item \alert{Mandatory operand multiplication} (\structure{$A\odot$}, \structure{$B\odot$})
         — earlier buggy version (no operand $\odot$) over-divided by ${\sim}10^{29}$ across 24 blocks.
-  \item Conservation: $\sum \R_A + \sum \R_B \approx \sum \R_Y$ (the $2Y$ denominator splits
+  \item Conservation: $\sum \Rel_A + \sum \Rel_B \approx \sum \Rel_Y$ (the $2Y$ denominator splits
         each upstream relevance evenly across the two bilinear chains).
   \item Replaces the operand-side \texttt{divide\_gradient($\cdot$, factor)} calls used
         by stock-timm $\eps$-LRP attention.
@@ -431,15 +428,15 @@ Sign-decompose operands: $A^\pm = \max/\min(A, 0)$, similarly $B^\pm$.
   Y^+ = A^+B^+ + A^-B^- \;(\geq 0), \qquad
   Y^- = A^+B^- + A^-B^+ \;(\leq 0)
 \]
-Define stabilised ratios $F = \R_Y/(Y^+ + \eps)$, $G = \R_Y/(Y^- - \eps)$. Then
+Define stabilised ratios $F = \Rel_Y/(Y^+ + \eps)$, $G = \Rel_Y/(Y^- - \eps)$. Then
 \[
-  \R_A = \tfrac12 \Bigl\{ A^+ \odot \bigl[\alpha\,(FB^{+\top}) + \beta\,(GB^{-\top})\bigr]
+  \Rel_A = \half \Bigl\{ A^+ \odot \bigl[\alpha\,(FB^{+\top}) + \beta\,(GB^{-\top})\bigr]
                        + A^- \odot \bigl[\alpha\,(FB^{-\top}) + \beta\,(GB^{+\top})\bigr] \Bigr\}
 \]
-(symmetric for $\R_B$).
+(symmetric for $\Rel_B$).
 
 \begin{itemize}
-  \item \alert{Conservation}: $\sum \R_A + \sum \R_B = (\alpha+\beta)\,\sum \R_Y$;
+  \item \alert{Conservation}: $\sum \Rel_A + \sum \Rel_B = (\alpha+\beta)\,\sum \Rel_Y$;
         with $\alpha+\beta = 1$, exact modulo $\eps$.
   \item \alert{Why not just Prop.\ 3.3?} On near-orthogonal $Q,K$ with $|2Y|\sim\eps$ in many
         positions, the factor-2 rule's \texttt{LRP-0 Case~B} cancellation amplifies relevance by
@@ -451,17 +448,17 @@ Define stabilised ratios $F = \R_Y/(Y^+ + \eps)$, $G = \R_Y/(Y^- - \eps)$. Then
 \begin{frame}{Residual rule: Otsuki ratio split}{For \texttt{add1} and \texttt{add2} in Diagram~B}
 For $y = x + \mathrm{branch}$:
 \[
-  \R_x = \R_y \odot \frac{|x|}{|x| + |\mathrm{branch}| + \eps},
+  \Rel_x = \Rel_y \odot \frac{|x|}{|x| + |\mathrm{branch}| + \eps},
   \qquad
-  \R_{\mathrm{branch}} = \R_y \odot \frac{|\mathrm{branch}|}{|x| + |\mathrm{branch}| + \eps}
+  \Rel_{\mathrm{branch}} = \Rel_y \odot \frac{|\mathrm{branch}|}{|x| + |\mathrm{branch}| + \eps}
 \]
 
 \begin{itemize}
   \item Ratio rule \alert{matches the magnitudes} carried by each branch — the side that holds more
         signal also receives proportionally more relevance.
-  \item Bare autograd would give $\R_x = \R_{\mathrm{branch}} = \R_y$ (each branch sees the FULL gradient),
-        which sums to $2\R_y$ on \alert{every} block $\Rightarrow$ relevance grows $2^{24}$ fold over a 24-block ViT-L.
-  \item Conservation: $\sum \R_x + \sum \R_{\mathrm{branch}} \approx \sum \R_y$ exactly modulo $\eps$.
+  \item Bare autograd would give $\Rel_x = \Rel_{\mathrm{branch}} = \Rel_y$ (each branch sees the FULL gradient),
+        which sums to $2\Rel_y$ on \alert{every} block $\Rightarrow$ relevance grows $2^{24}$ fold over a 24-block ViT-L.
+  \item Conservation: $\sum \Rel_x + \sum \Rel_{\mathrm{branch}} \approx \sum \Rel_y$ exactly modulo $\eps$.
 \end{itemize}
 
 \begin{exampleblock}{In code}
@@ -471,23 +468,23 @@ The \texttt{EvaBlock} forward is rebound by \texttt{EvaBlockResidualCanonizer}; 
 
 \begin{frame}{LayerScale rule: uniform allocation (AttnLRP Eq.~7)}{For \texttt{ls1} and \texttt{ls2} in Diagram~B}
 LayerScale (Touvron et al.\ 2021) multiplies each branch by a learnable per-channel
-$\gamma\in\mathbb{R}^D$ initialised tiny ($\sim 10^{-4}$).
+$\gamma\in\reals^D$ initialised tiny ($\sim 10^{-4}$).
 
 \begin{block}{Why it matters for LRP}
 Bare autograd: $\nabla_{\mathrm{branch}} = \nabla_y\cdot\gamma$.\\
 With $\gamma\sim 10^{-4}$ and 24 blocks $\times$ 2 LayerScales/block:
-$\R$ deflates by $10^{-200}$ — numerical death.
+$\Rel$ deflates by $10^{-200}$ — numerical death.
 \end{block}
 
 \begin{block}{The fix}
 Treat $\gamma$ as a leaf parameter that absorbs half the relevance:
 \[
-  \R_{\mathrm{branch}} = \tfrac12 \R_y, \qquad \R_\gamma = \tfrac12 \R_y\ \text{(absorbed)}
+  \Rel_{\mathrm{branch}} = \half \Rel_y, \qquad \Rel_\gamma = \half \Rel_y\ \mbox{(absorbed)}
 \]
 \end{block}
 
 \begin{itemize}
-  \item Replaces ``$\times\gamma$'' dampening with constant ``$\times\tfrac12$'' per LayerScale.
+  \item Replaces ``$\times\gamma$'' dampening with constant ``$\times\half$'' per LayerScale.
   \item In code: \texttt{LayerScaleUniformCanonizer} on the standalone \texttt{LayerScaleMul} module,
         or routed inline by \texttt{EvaBlockResidualCanonizer} when \texttt{layerscale\_uniform=True}.
 \end{itemize}
@@ -499,21 +496,21 @@ Treat $\gamma$ as a leaf parameter that absorbs half the relevance:
 \toprule
 Rule & Conservation & Comment \\
 \midrule
-$\eps$-LRP on Linear            & $\sum \R_i = \sum \R_j$ mod $\eps$ & exact \\
-Identity (softmax / LN / GELU)  & $\sum \R_i = \sum \R_j$ exact      & $\R$ passes through \\
-ScaleByConstant identity        & $\R_x = \R_y$ exact                 & constant absorbs none \\
-Bilinear $2y+\eps$              & $\sum \R_A + \sum \R_B \approx \sum \R_Y$ & even $A/B$ split \\
-Bilinear AlphaBeta              & $= (\alpha+\beta)\sum \R_Y$         & exact when $\alpha+\beta=1$ \\
-Residual ratio                  & $\sum \R_x + \sum \R_b \approx \sum \R_y$ & magnitude-weighted \\
-LayerScale uniform              & $\R_{\mathrm{branch}} = \tfrac12 \R_y$ & $\gamma$ absorbs the rest \\
+$\eps$-LRP on Linear            & $\sum \Rel_i = \sum \Rel_j$ mod $\eps$ & exact \\
+Identity (softmax / LN / GELU)  & $\sum \Rel_i = \sum \Rel_j$ exact      & $\Rel$ passes through \\
+ScaleByConstant identity        & $\Rel_x = \Rel_y$ exact                 & constant absorbs none \\
+Bilinear $2y+\eps$              & $\sum \Rel_A + \sum \Rel_B \approx \sum \Rel_Y$ & even $A/B$ split \\
+Bilinear AlphaBeta              & $= (\alpha+\beta)\sum \Rel_Y$         & exact when $\alpha+\beta=1$ \\
+Residual ratio                  & $\sum \Rel_x + \sum \Rel_b \approx \sum \Rel_y$ & magnitude-weighted \\
+LayerScale uniform              & $\Rel_{\mathrm{branch}} = \half \Rel_y$ & $\gamma$ absorbs the rest \\
 \bottomrule
 \end{tabular}
 
 \vspace{4mm}
 \begin{itemize}
-  \item Multiplied across 24 blocks: bare autograd through Eva yields $\R$ inflated by $\sim\!10^{21}$
-        relative to the target logit. Composite-corrected: $\sim 10^{0\text{–}1}$.
-  \item Ratio of $\sum \R$ to the target logit is the per-block conservation \alert{audit metric}.
+  \item Multiplied across 24 blocks: bare autograd through Eva yields $\Rel$ inflated by $\sim\!10^{21}$
+        relative to the target logit. Composite-corrected: $\sim 10^{0}$ to $10^{1}$.
+  \item Ratio of $\sum \Rel$ to the target logit is the per-block conservation \alert{audit metric}.
 \end{itemize}
 \end{frame}
 
@@ -561,7 +558,7 @@ Canonizer & Target & Effect \\
 \texttt{SoftmaxIdentityCanonizer}          & \texttt{SoftmaxAlongLastDim}       & wrap forward in \texttt{\_SoftmaxIdentityRuleFn} \\
 \texttt{ScaleByConstantIdentityCanonizer}  & \texttt{ScaleByConstant}           & wrap forward in \texttt{\_ScaleIdentityRuleFn} \\
 \texttt{ResidualRatioCanonizer}            & \texttt{ResidualAdd}               & wrap forward in \texttt{\_ResidualRatioFn} \\
-\texttt{LayerScaleUniformCanonizer}        & \texttt{LayerScaleMul}             & wrap forward to apply \texttt{\_DivideGradientFn(\cdot,2)} \\
+\texttt{LayerScaleUniformCanonizer}        & \texttt{LayerScaleMul}             & wrap forward to apply \texttt{\_DivideGradientFn($\cdot$,2)} \\
 \bottomrule
 \end{tabular}
 
@@ -576,7 +573,8 @@ combinations enable PA-LRP, residual rule, LayerScale handling.
 
 \begin{frame}[fragile]{The composite the walkthrough uses}{One call activates everything}
 \begin{exampleblock}{Code (verbatim from \texttt{tutorials/vit\_crp/dinov3\_unfolded/walkthrough.ipynb})}
-\small\begin{verbatim}
+{\small
+\begin{verbatim}
 composite = AttnLRPCombinedComposite(
     matmul_factor_2=True,
     use_unfolded_attention=True,
@@ -585,6 +583,7 @@ composite = AttnLRPCombinedComposite(
     residual_lrp='ratio',
 )
 \end{verbatim}
+}
 \end{exampleblock}
 
 \textbf{Resolves to} (trace through \texttt{AttnLRPCombinedComposite.\_\_init\_\_}):
@@ -683,10 +682,11 @@ Hook: \texttt{blocks.\{i\}.attn.proj\_drop}, shape $(B, N, D)$.\\
 
 \begin{frame}[fragile]{Putting it together}{One block, one HeadConcept attribution}
 \textbf{What happens when the user runs:}
+{\scriptsize
 \begin{semiverbatim}
-\scriptsize
-res = attribution(x, [{"y":[class_id], "head\_concept":[(layer, head)]}], composite)
+res = attribution(x, [{"y":[class_id], "head_concept":[(layer, head)]}], composite)
 \end{semiverbatim}
+}
 
 \begin{enumerate}
   \item Composite \texttt{context} enters $\Rightarrow$ all canonizers \texttt{apply}.\\
@@ -698,7 +698,7 @@ res = attribution(x, [{"y":[class_id], "head\_concept":[(layer, head)]}], compos
         \begin{itemize}
           \item \texttt{context} (bilinear AlphaBeta) $\to$ \texttt{softmax} (identity) $\to$ \texttt{qk\_scores} (bilinear AlphaBeta)
           \item Through \texttt{rope\_q/k} and \texttt{q\_norm/k\_norm} ($\eps$-LRP)
-          \item Through residuals (ratio split) and LayerScale (uniform $\tfrac12$ allocation).
+          \item Through residuals (ratio split) and LayerScale (uniform $\half$ allocation).
         \end{itemize}
   \item Result is per-input-pixel relevance attributable to \alert{exactly this head} at \alert{exactly this block}.
   \item Composite \texttt{context} exits $\Rightarrow$ all canonizers \texttt{remove}; model is back to vanilla.
