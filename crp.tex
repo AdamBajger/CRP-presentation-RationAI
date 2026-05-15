@@ -464,12 +464,12 @@ For $y = x + \mathrm{branch}$:
   \item Conservation: $\sum \Rel_x + \sum \Rel_{\mathrm{branch}} \approx \sum \Rel_y$ exactly modulo $\eps$.
 \end{itemize}
 
-\begin{exampleblock}{In code}
-The \texttt{EvaBlock} forward is rebound by \texttt{EvaBlockResidualCanonizer}; both block-level adds (\texttt{add1}, \texttt{add2}) route through \texttt{\_ResidualRatioFn}. \texttt{ResidualRatioCanonizer} is the explicit canonizer for the standalone \texttt{ResidualAdd} module.
-\end{exampleblock}
+% \begin{exampleblock}{In code}
+% The \texttt{EvaBlock} forward is rebound by \texttt{EvaBlockResidualCanonizer}; both block-level adds (\texttt{add1}, \texttt{add2}) route through \texttt{\_ResidualRatioFn}. \texttt{ResidualRatioCanonizer} is the explicit canonizer for the standalone \texttt{ResidualAdd} module.
+% \end{exampleblock}
 \end{frame}
 
-\begin{frame}{LayerScale rule: uniform allocation (AttnLRP Eq.~7)}{For \texttt{ls1} and \texttt{ls2} in Diagram~B}
+\begin{frame}{LayerScale rule: uniform allocation (AttnLRP Eq.~7)}{}
 LayerScale (Touvron et al.\ 2021) multiplies each branch by a learnable per-channel
 $\gamma\in\reals^D$ initialised tiny ($\sim 10^{-4}$).
 
@@ -486,11 +486,12 @@ Treat $\gamma$ as a leaf parameter that absorbs half the relevance:
 \]
 \end{block}
 
-\begin{itemize}
-  \item Replaces ``$\times\gamma$'' dampening with constant ``$\times\half$'' per LayerScale.
-  \item In code: \texttt{LayerScaleUniformCanonizer} on the standalone \texttt{LayerScaleMul} module,
-        or routed inline by \texttt{EvaBlockResidualCanonizer} when \texttt{layerscale\_uniform=True}.
-\end{itemize}
+% \begin{itemize}
+%   \item 
+  Replaces ``$\times\gamma$'' dampening with constant ``$\times\half$'' per LayerScale.
+  % \item In code: \texttt{LayerScaleUniformCanonizer} on the standalone \texttt{LayerScaleMul} module,
+  %       or routed inline by \texttt{EvaBlockResidualCanonizer} when \texttt{layerscale\_uniform=True}.
+% \end{itemize}
 \end{frame}
 
 \begin{frame}{Conservation properties — at a glance}
