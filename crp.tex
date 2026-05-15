@@ -355,7 +355,7 @@ For an element-wise nonlinearity $y_i = f(x_i)$, LRP-0 reduces to
 \]
 
 \begin{itemize}
-  \item \texttt{softmax}: relevance passes \alert{straight through} — does NOT route via Jacobian.
+  \item \texttt{softmax}: relevance passes straight through — does NOT route via Jacobian.
   \item \texttt{LayerNorm}: \texttt{stop\_gradient}(std) $\to$ identity on affine.
   \item \texttt{GELU}, \texttt{scale\_q} (constant multiplier): same form.
 \end{itemize}
