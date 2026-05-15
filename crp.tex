@@ -37,7 +37,7 @@
 \newcommand{\reals}{\mathbf{R}}
 
 \title[CRP for ViTs]{Concept Relevance Propagation for Vision Transformers}
-\subtitle[AttnLRP $\to$ CRP]{Rules, canonizers, concepts}
+\subtitle{Rules, canonizers, concepts}
 \author[A.~Bajger]{Adam Bajger\texorpdfstring{\\}{, }RationAI lab}
 \institute[FI MU]{Faculty of Informatics, Masaryk University}
 \date{\today}
@@ -56,20 +56,18 @@
 % ═══════════════════════════════════════════════════════════════════════════
 
 \begin{frame}{Motivation}
+ViTs win vision benchmarks. We want post-hoc explanations that are:
 \begin{itemize}
-  \item ViTs win vision benchmarks. We want \alert{post-hoc explanations} that are:
-    \begin{itemize}
-      \item \structure{faithful} (conserve the prediction),
-      \item \structure{spatial} (pixel-level heat-maps),
-      \item \structure{conceptual} (per-head, per-channel, per-token).
-    \end{itemize}
-  \item Gradient saliency loses conservation through softmax, bilinear matmul,
-        residual adds, LayerScale.
-  \item \alert{AttnLRP}~\cite{achtibat2024attnlrp} — transformer-aware LRP rules.
-  \item \alert{CRP}~\cite{achtibat2023crp} — lifts attribution to per-concept maps.
-  \item Our work: ground both into a single \texttt{zennit}-compatible composite for
-        DINOv3~\cite{darcet2024dinov3} and standard timm ViTs~\cite{dosovitskiy2021vit}.
+  \item faithful (conserve the prediction),
+  \item spatial (pixel-level heat-maps),
+  \item conceptual (per-head, per-channel, per-token).
 \end{itemize}
+Gradient saliency loses conservation through softmax, bilinear matmul, residual adds, LayerScale.
+
+AttnLRP~\cite{achtibat2024attnlrp} — transformer-aware LRP rules.
+CRP~\cite{achtibat2023crp} — lifts attribution to per-concept maps.
+
+Our work: ground both into a single \texttt{zennit}-compatible composite for DINOv3~\cite{darcet2024dinov3} and standard timm ViTs~\cite{dosovitskiy2021vit}.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -99,17 +97,16 @@ Stock LRP cannot route relevance through them.
 Per-non-linearity rules that preserve LRP-0 conservation~\cite{achtibat2024attnlrp}:
 
 \begin{itemize}
-  \item \alert{Identity rule} for normalisations (Eq.~9) — softmax, LayerNorm, GELU.
-  \item \alert{Bilinear rule} (Prop.~3.3) for $Q@K^\top$ and $\mathrm{attn}@V$.
-  \item \alert{Stop-gradient on std} inside LayerNorm.
+  \item Identity rule for normalisations (Eq.~9) — softmax, LayerNorm, GELU.
+  \item Bilinear rule (Prop.~3.3) for $Q@K^\top$ and $\mathrm{attn}@V$.
+  \item Stop-gradient on std inside LayerNorm.
 \end{itemize}
 
 \begin{block}{Our additions}
 \begin{itemize}
-  \item \alert{AlphaBeta on bilinear} — Bach~\cite{bach2015lrp} generalised; better magnitude control.
-  \item \alert{Residual ratio} (Otsuki split) and \alert{LayerScale uniform rule}.
-  \item \alert{Attention unfolding}: substitute attention with named-submodule form
-        so concepts can hook on $Q$, $K$, $V$, head, channel, token positions.
+  \item AlphaBeta on bilinear — Bach~\cite{bach2015lrp} generalised; better magnitude control.
+  \item Residual ratio (Otsuki split) and LayerScale uniform rule.
+  \item Attention unfolding: substitute attention with named-submodule form so concepts can hook on $Q$, $K$, $V$, head, channel, token positions.
 \end{itemize}
 \end{block}
 \end{frame}
@@ -122,24 +119,22 @@ Per-non-linearity rules that preserve LRP-0 conservation~\cite{achtibat2024attnl
 \begin{columns}[T]
 \begin{column}{0.48\textwidth}
 \begin{exampleblock}{Standard timm ViT}
-\structure{Pre-norm}, no RoPE, no LayerScale, 1 cls token.\\
+Pre-norm, no RoPE, no LayerScale, 1 cls token.\\
 $N = 1 + 196 = 197$ tokens.
 \end{exampleblock}
 \end{column}
 \begin{column}{0.48\textwidth}
 \begin{exampleblock}{Eva / DINOv3}
-\structure{Pre-norm}, RoPE on $Q/K$, LayerScale $\gamma$, 4 register tokens prepended to cls.\\
+Pre-norm, RoPE on $Q/K$, LayerScale $\gamma$, 4 register tokens prepended to cls.\\
 $N = 5 + 256 = 261$ tokens.
 \end{exampleblock}
 \end{column}
 \end{columns}
 
 \vspace{4mm}
-\begin{itemize}
-  \item Both share the chain
-        $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to \mathrm{LayerScale}? \to \mathrm{add}_1 \to \mathrm{LN} \to \mathrm{MLP} \to \mathrm{LayerScale}? \to \mathrm{add}_2$.
-  \item Both attention forwards get unfolded into named submodules — the bridge to per-concept conditioning.
-\end{itemize}
+Both share the chain: $\mathbf{x} \to \mathrm{LN} \to \mathrm{Attn} \to \mathrm{LayerScale}? \to \mathrm{add}_1 \to \mathrm{LN} \to \mathrm{MLP} \to \mathrm{LayerScale}? \to \mathrm{add}_2$.
+
+Both attention forwards get unfolded into named submodules — the bridge to per-concept conditioning.
 \end{frame}
 
 % ── Diagram A: standard timm ViT ──────────────────────────────────────────
@@ -204,9 +199,9 @@ $N = 5 + 256 = 261$ tokens.
 }
 
 \vspace{2mm}
-\scriptsize \alert{Red}: bilinear matmuls — AlphaBeta rule.
-\structure{Green}: normalisations — identity rule.
-\structure{Blue}: linears — $\eps$-LRP. \texttt{*\_lrp\_probe} sites are identity placeholders, the concept hook points.
+\scriptsize Red: bilinear matmuls — AlphaBeta rule.
+Green: normalisations — identity rule.
+Blue: linears — $\eps$-LRP. \texttt{*\_lrp\_probe} sites are identity placeholders, the concept hook points.
 \end{frame}
 
 % ── Diagram B: Eva / DINOv3 ────────────────────────────────────────────────
@@ -301,12 +296,10 @@ Submodule path & Tensor shape & Concept use \\
 \end{tabular}
 
 \vspace{4mm}
-\begin{itemize}
-  \item Four 3D sites share one shape contract: $(B, N, D)$. Any concept hooks at any site.
-  \item Probes are identity placeholders — math-transparent, no rule effect.
-  \item Site interpretation: $q$ probe answers ``which pixels populated the query subspace?'';
+Four 3D sites share one shape contract: $(B, N, D)$. Any concept hooks at any site.
+Probes are identity placeholders — math-transparent, no rule effect.
+Site interpretation: $q$ probe answers ``which pixels populated the query subspace?'';
         $\mathit{proj\_drop}$ answers ``which contributed to the final block output?''.
-\end{itemize}
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -324,14 +317,14 @@ Module & Rule & Source \\
 \texttt{GELU}                         & Identity (Eq.~9)                    & \cite{achtibat2024attnlrp} \\
 \texttt{softmax}                      & Identity                            & \cite{achtibat2024attnlrp} \\
 \texttt{scale\_q} (constant mul)      & Identity                            & graph constant \\
-\texttt{qk\_scores}, \texttt{context} & \alert{AlphaBeta on bilinear}       & \cite{bach2015lrp} + our derivation \\
-Residual additions                    & \alert{Otsuki ratio split}          & magnitude-weighted \\
-LayerScale                            & \alert{Uniform $\half$ allocation}  & AttnLRP Eq.~7~\cite{achtibat2024attnlrp} \\
+\texttt{qk\_scores}, \texttt{context} & AlphaBeta on bilinear               & \cite{bach2015lrp} + our derivation \\
+Residual additions                    & Otsuki ratio split                   & magnitude-weighted \\
+LayerScale                            & Uniform $\half$ allocation           & AttnLRP Eq.~7~\cite{achtibat2024attnlrp} \\
 \bottomrule
 \end{tabular}
 
 \vspace{4mm}
-\structure{Vanilla forward, LRP only on backward.}
+Vanilla forward, LRP only on backward.
 Forwards are bit-identical; only the autograd graph changes during attribution.
 \end{frame}
 
@@ -355,7 +348,7 @@ For an element-wise nonlinearity $y_i = f(x_i)$, LRP-0 reduces to
 \]
 
 \begin{itemize}
-  \item \texttt{softmax}: relevance passes \alert{straight through} — does NOT route via Jacobian.
+  \item \texttt{softmax}: relevance passes straight through — does NOT route via Jacobian.
   \item \texttt{LayerNorm}: \texttt{stop\_gradient}(std) $\to$ identity on affine.
   \item \texttt{GELU}, \texttt{scale\_q} (constant multiplier): same form.
 \end{itemize}
@@ -375,10 +368,12 @@ Define $F = \Rel_Y/(Y^+ + \eps)$, $G = \Rel_Y/(Y^- - \eps)$. Then
                        + A^- \odot \bigl[\alpha\,(FB^{-\top}) + \beta\,(GB^{+\top})\bigr] \Bigr\}
 \]
 (symmetric for $\Rel_B$).
-
+\medskip
+\textit{Note: $\odot$ denotes the Hadamard product (element-wise multiplication).}
+\vspace{2mm}
 \begin{itemize}
   \item Conservation: $\sum \Rel_A + \sum \Rel_B = (\alpha+\beta)\sum \Rel_Y$; exact when $\alpha+\beta=1$.
-  \item \alert{Default} $\alpha=0.5, \beta=0.5$ — balanced, tightest magnitude control.
+  \item Default $\alpha=0.5, \beta=0.5$ — balanced, tightest magnitude control.
   \item AttnLRP's $2Y+\eps$ rule amplifies by $\sim 1/\eps$ at near-orthogonal $Q,K$.
         Sign-splitting denominators avoid this structurally.
 \end{itemize}
@@ -391,7 +386,9 @@ For $y = x + \mathrm{branch}$:
   \qquad
   \Rel_{\mathrm{branch}} = \Rel_y \odot \frac{|\mathrm{branch}|}{|x| + |\mathrm{branch}| + \eps}
 \]
-
+\medskip
+\textit{Note: $\odot$ denotes the Hadamard product (element-wise multiplication).}
+\vspace{2mm}
 \begin{itemize}
   \item Magnitude-weighted: bigger-signal branch gets more relevance.
   \item Bare autograd: $\Rel_x = \Rel_{\mathrm{branch}} = \Rel_y$ — sums to $2\Rel_y$
@@ -432,11 +429,9 @@ LayerScale uniform       & $\Rel_{\mathrm{branch}} = \half \Rel_y$       & $\gam
 \end{tabular}
 
 \vspace{4mm}
-\begin{itemize}
-  \item Bare autograd on 24-block Eva DINOv3 inflates $\sum\!\Rel$ by $\sim\!10^{21}$.
-  \item Composite-corrected: $\sum\!\Rel$ within $\sim\!10^0$–$10^1$ of target logit.
-  \item Audit metric: $\sum\!\Rel\,/\,\mathrm{logit}$ per block.
-\end{itemize}
+Bare autograd on 24-block Eva DINOv3 inflates $\sum\!\Rel$ by $\sim\!10^{21}$.
+Composite-corrected: $\sum\!\Rel$ within $\sim\!10^0$–$10^1$ of target logit.
+Audit metric: $\sum\!\Rel\,/\,\mathrm{logit}$ per block.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -447,17 +442,17 @@ LayerScale uniform       & $\Rel_{\mathrm{branch}} = \half \Rel_y$       & $\gam
 Reversible model transformations applied inside the composite \texttt{context}:
 
 \begin{itemize}
-  \item \alert{Forward rebind} — replace the module's \texttt{forward}.
+  \item Forward rebind — replace the module's \texttt{forward}.
         Forward output unchanged; backward routes through the rule's
         autograd \texttt{Function}.
-  \item \alert{Substitution} — swap monolithic attention for an unfolded
+  \item Substitution — swap monolithic attention for an unfolded
         version with named submodules (\texttt{qk\_scores}, \texttt{softmax},
         \texttt{context}, \texttt{*\_lrp\_probe}, \ldots).\\
         Required because per-tensor rules cannot attach to a single
         monolithic \texttt{Attention.forward}.
 \end{itemize}
 
-\centering\structure{Both types are reversible.}
+\centering Both types are reversible.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -478,7 +473,7 @@ Reversible model transformations applied inside the composite \texttt{context}:
   \item Attention $\to$ unfolded substitution (timm + Eva, both always-on)
 \end{itemize}
 
-\centering\structure{One call activates everything.} Any supported ViT (Eva DINOv3, timm \texttt{vit\_base}, our \texttt{vit\_small})
+\centering One call activates everything. Any supported ViT (Eva DINOv3, timm \texttt{vit\_base}, our \texttt{vit\_small})
 receives the same validated recipe.
 \end{frame}
 
@@ -488,7 +483,7 @@ receives the same validated recipe.
 
 \begin{frame}{Concepts}
 \begin{block}{LRP $\to$ one heatmap per input. CRP $\to$ one heatmap per concept.}
-A \alert{concept} partitions a hidden tensor into named ``parts''. To
+A concept partitions a hidden tensor into named ``parts''. To
 attribute concept $c$ at layer $\ell$: mask all parts $\neq c$, continue
 backward as usual.
 \end{block}
@@ -499,9 +494,9 @@ Any concept hooks at any site; meaning shifts with the site.
 \end{block}
 
 \begin{itemize}
-  \item \alert{HeadConcept} — partitions $D$ into $H$ contiguous head slices ($D/H$ wide).
-  \item \alert{EmbeddingDimConcept} — one part per single embedding dim ($D$ parts total).
-  \item \alert{TokenConcept} — one part per token position; optional
+  \item HeadConcept — partitions $D$ into $H$ contiguous head slices ($D/H$ wide).
+  \item EmbeddingDimConcept — one part per single embedding dim ($D$ parts total).
+  \item TokenConcept — one part per token position; optional
         \texttt{token\_filter=slice(...)} restricts to cls / register / spatial.
 \end{itemize}
 \end{frame}
@@ -522,7 +517,7 @@ $\Rel$ reshaped to $(B, N, H, d_h)$ has heads on a separate axis.
 \]
 \end{block}
 
-\structure{Question}: ``which head fired on which input regions?''
+Question: ``which head fired on which input regions?''
 \end{frame}
 
 \begin{frame}{EmbeddingDimConcept}
@@ -540,7 +535,7 @@ Finer than HeadConcept: one part per single dim of $D$.
 \]
 \end{block}
 
-\structure{Question}: ``which single embedding direction carries the prediction at this layer?''
+Question: ``which single embedding direction carries the prediction at this layer?''
 \end{frame}
 
 \begin{frame}{TokenConcept}
@@ -560,7 +555,7 @@ on DINOv3; \texttt{slice(5, None)} = spatial patches only).
 \]
 \end{block}
 
-\structure{Question}: ``did this cls / register / patch position drive the prediction?''\\
+Question: ``did this cls / register / patch position drive the prediction?''\\
 DINOv3 register tokens~\cite{darcet2024dinov3}: 4 ``signal-sinks'' separate from cls.
 \end{frame}
 
@@ -581,7 +576,7 @@ DINOv3 register tokens~\cite{darcet2024dinov3}: 4 ``signal-sinks'' separate from
           \item \texttt{rope\_q/k}, \texttt{q\_norm/k\_norm} ($\eps$-LRP)
           \item Residuals (ratio split), LayerScale (uniform $\half$).
         \end{itemize}
-  \item Result: per-pixel relevance for \alert{exactly this head} at \alert{exactly this block}.
+  \item Result: per-pixel relevance for exactly this head at exactly this block.
   \item \texttt{context} exits $\Rightarrow$ canonizers remove, model back to vanilla.
 \end{enumerate}
 \end{frame}
@@ -596,20 +591,20 @@ DINOv3 register tokens~\cite{darcet2024dinov3}: 4 ``signal-sinks'' separate from
 \toprule
 Dataset & What we control & XAI value \\
 \midrule
-\alert{FunnyBirds}~\cite{hesse2023funnybirds}
+FunnyBirds~\cite{hesse2023funnybirds}
   & 50 procedural bird species, per-part GT segmentation maps
   & does the heatmap localise the right body parts? \\
-\alert{dSprites}~\cite{higgins2017dsprites}
+dSprites~\cite{higgins2017dsprites}
   & 3 shapes $\times$ 6 scales $\times$ 40 orientations $\times$ $32^2$ positions
   & does the heatmap track shape pixels? \\
-\alert{ColoredMNIST}~\cite{nam2020lff}
+ColoredMNIST~\cite{nam2020lff}
   & digits tinted with class colours; correlation broken at test time
-  & \alert{shape-vs-shortcut probe} (see findings) \\
+  & shape-vs-shortcut probe (see findings) \\
 \bottomrule
 \end{tabular}
 
 \vspace{4mm}
-All three are \alert{small enough to train end-to-end} and have ground-truth
+All three are small enough to train end-to-end and have ground-truth
 properties that let us reason about whether an attribution method is
 correct, not just visually plausible.
 \end{frame}
@@ -620,11 +615,11 @@ correct, not just visually plausible.
 \toprule
 Backbone & Block layout & Use \\
 \midrule
-\alert{vit\_dinov3} (ViT-L/16, 24 blocks, 304 M) & Eva + RoPE + LayerScale + 4 register tokens
+vit\_dinov3 (ViT-L/16, 24 blocks, 304 M) & Eva + RoPE + LayerScale + 4 register tokens
   & main subject of the rule design \\
-\alert{vit\_base} (ViT-B/16, 12 blocks, 86 M)    & timm standard, no LayerScale, 1 cls token
+vit\_base (ViT-B/16, 12 blocks, 86 M)    & timm standard, no LayerScale, 1 cls token
   & cross-architecture sanity \\
-\alert{vit\_small} (ViT-S/16, 12 blocks, 22 M)   & timm standard
+vit\_small (ViT-S/16, 12 blocks, 22 M)   & timm standard
   & our small-model probe trained on the 3 datasets above \\
 \bottomrule
 \end{tabular}
@@ -632,7 +627,7 @@ Backbone & Block layout & Use \\
 \vspace{4mm}
 \begin{itemize}
   \item The unfolding canonizer auto-detects Eva vs timm attention; same composite serves all three.
-  \item \texttt{vit\_small} is the \alert{development substrate}: short training,
+  \item \texttt{vit\_small} is the development substrate: short training,
         known ground-truth properties (FunnyBirds parts, dSprites shape, ColoredMNIST bias).
 \end{itemize}
 \end{frame}
@@ -643,22 +638,22 @@ Backbone & Block layout & Use \\
 
 \begin{frame}{Key findings so far}
 \begin{itemize}
-  \item \alert{Bare AttnLRP fails on DINOv3.} 24 EvaBlocks with LayerScale
+  \item Bare AttnLRP fails on DINOv3. 24 EvaBlocks with LayerScale
         $\sim\!10^{-4}$ + the $2Y+\eps$ bilinear rule overflow fp32 by
         mid-depth. No single literature remedy fixes it; the working
-        composite needs \alert{three} rules simultaneously: AlphaBeta
+        composite needs three rules simultaneously: AlphaBeta
         bilinear, Otsuki ratio residual, uniform LayerScale.
-  \item \alert{AlphaBeta-on-bilinear} replaces $2Y+\eps$. Sign-splitting
+  \item AlphaBeta-on-bilinear replaces $2Y+\eps$. Sign-splitting
         denominators bound per-element amplification structurally —
-        \alert{$\sim$ 19 OOM} smaller $\max|R|$ vs the standard rule on
+        $\sim$ 19 OOM smaller $\max|R|$ vs the standard rule on
         DINOv3 ViT-L, while preserving spatial focus.
-  \item \alert{Unfolded attention enables CRP.} Stock attention has no
+  \item Unfolded attention enables CRP. Stock attention has no
         named submodules. Substituting in a forward-equivalent unfolded
         form exposes $Q$, $K$, $V$, scores, softmax, output as concept hooks.
-  \item \alert{Single shape contract.} All four 3D hookable sites carry
+  \item Single shape contract. All four 3D hookable sites carry
         $(B, N, D)$; any of the three concepts attaches at any site.
         Three classes replaced our earlier six-class taxonomy.
-  \item \alert{Residual flow on FunnyBirds vit\_base}: 70--82\% of
+  \item Residual flow on FunnyBirds vit\_base: 70--82\% of
         relevance flows through the skip path mid-stack — motivates the
         move to smaller (12-block) backbones.
 \end{itemize}
@@ -670,15 +665,15 @@ Backbone & Block layout & Use \\
 \toprule
 Dataset & train-val acc & test acc & Interpretation \\
 \midrule
-\alert{dSprites}      & $0.999$ & $0.999$ & 3-class shape task — trivial; ceiling. \\
-\alert{FunnyBirds}    & (in progress) & — & 50-class part-based; ImageNet recipe (RandAug + Mixup + label smoothing + cosine + LLRD). \\
-\alert{ColoredMNIST}  & $0.978$ & $0.127$ & \alert{intentionally biased}: model learned colour shortcut. Train-val high, test near chance. \\
+dSprites      & $0.999$ & $0.999$ & 3-class shape task — trivial; ceiling. \\
+FunnyBirds    & (in progress) & — & 50-class part-based; ImageNet recipe (RandAug + Mixup + label smoothing + cosine + LLRD). \\
+ColoredMNIST  & $0.978$ & $0.127$ & intentionally biased: model learned colour shortcut. Train-val high, test near chance. \\
 \bottomrule
 \end{tabular}
 
 \vspace{4mm}
 \begin{itemize}
-  \item ColoredMNIST is the deliverable \alert{bias probe} — we know the
+  \item ColoredMNIST is the deliverable bias probe — we know the
         model's failure mode (colour, not shape). XAI heatmaps should
         light up colour-bearing pixels, not stroke geometry. If they
         don't, the method is mis-identifying the cause of the prediction.
@@ -693,14 +688,14 @@ We ship the trained \texttt{vit\_small} with two published baseline methods
 for manual sanity checking before applying CRP:
 
 \begin{itemize}
-  \item \alert{LeGrad}~\cite{bousselham2024legrad} — gradient of the
+  \item LeGrad~\cite{bousselham2024legrad} — gradient of the
         prediction w.r.t.\ attention weights; aggregated per block.
-  \item \alert{Chefer's rollout}~\cite{chefer2021transformer} — per-block
+  \item Chefer's rollout~\cite{chefer2021transformer} — per-block
         $(\mathrm{grad} \odot A)_+$ averaged over heads, rolled up across
         blocks via $R \leftarrow R + R_\mathrm{block} R$.
 \end{itemize}
 
-\centering\structure{Both hook the post-softmax attention weight tensor.}\\
+\centering Both hook the post-softmax attention weight tensor.\\
 No composite needed — they are stock-model methods.
 The walkthrough notebook runs them next to our AttnLRP / CRP attributions on the same focal image,
 so the user can compare the three approaches visually.
@@ -713,7 +708,7 @@ so the user can compare the three approaches visually.
 \begin{frame}[plain]{}
 \centering
 \vfill
-{\Huge\structure{Notebook walkthroughs} \\[6mm]
+{\Huge Notebook walkthroughs \\[6mm]
 \large\texttt{tutorials/vit\_crp/dinov3\_unfolded/walkthrough.ipynb}\\[2mm]
 \small the AttnLRP+CRP recipe, 3 concepts $\times$ 4 sites, cascade\\[4mm]
 \large\texttt{tutorials/vit\_crp/vit\_small\_baselines/vit\_small\_baselines.ipynb}\\[2mm]
