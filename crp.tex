@@ -278,28 +278,20 @@ Blue: linears — $\eps$-LRP. \texttt{*\_lrp\_probe} sites are identity placehol
 \texttt{ls1}/\texttt{ls2} (LayerScale~\cite{touvron2021cait}).
 \end{frame}
 
-\begin{frame}{Hookable sites}
-\centering\small
-\begin{tabular}{lll}
-\toprule
-Submodule path & Tensor shape & Concept use \\
-\midrule
-\texttt{blocks.\{i\}.attn.q\_lrp\_probe}     & $(B,N,D)$ & all 3 concepts \\
-\texttt{blocks.\{i\}.attn.k\_lrp\_probe}     & $(B,N,D)$ & all 3 concepts \\
-\texttt{blocks.\{i\}.attn.v\_lrp\_probe}     & $(B,N,D)$ & all 3 concepts \\
-\texttt{blocks.\{i\}.attn.proj\_drop}        & $(B,N,D)$ & all 3 concepts \\
-\midrule
-\texttt{blocks.\{i\}.attn.qk\_scores}        & $(B,H,N,N)$ & rule target only \\
-\texttt{blocks.\{i\}.attn.softmax}           & $(B,H,N,N)$ & rule target only \\
-\texttt{blocks.\{i\}.attn.context}           & $(B,H,N,d_h)$ & rule target only \\
-\bottomrule
-\end{tabular}
+\begin{frame}{Attention unfolding}
+Stock attention forward is one expression:
+\[
+  \mathrm{Attn}(\mathbf{x}) \;=\; \mathrm{softmax}\!\left(\tfrac{Q K^\top}{\sqrt{d_h}}\right) V .
+\]
+Per-tensor LRP rules need a handle on each non-linear op ($Q K^\top$,
+softmax, the $\mathrm{attn} \cdot V$ bilinear). We rewrite the same
+forward as a composition of named ops so that per-tensor rules can
+attach (and any concept can address $Q$, $K$, $V$ slices). Forward
+output is bit-identical; the rewrite changes only the autograd graph.
 
-\vspace{4mm}
-Four 3D sites share one shape contract: $(B, N, D)$. Any concept hooks at any site.
-Probes are identity placeholders — math-transparent, no rule effect.
-Site interpretation: $q$ probe answers ``which pixels populated the query subspace?'';
-        $\mathit{proj\_drop}$ answers ``which contributed to the final block output?''.
+\begin{block}{Hookable 3D sites (one shape contract $\reals^{B\times N\times D}$)}
+\centering $q,\ k,\ v$ (after qkv-split, before per-head reshape) and the post-projection output.
+\end{block}
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -435,49 +427,6 @@ Audit metric: $\sum\!\Rel\,/\,\mathrm{logit}$ per block.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
-\section[Canonizers]{Canonizers}
-% ═══════════════════════════════════════════════════════════════════════════
-
-\begin{frame}{Canonizers}
-Reversible model transformations applied inside the composite \texttt{context}:
-
-\begin{itemize}
-  \item Forward rebind — replace the module's \texttt{forward}.
-        Forward output unchanged; backward routes through the rule's
-        autograd \texttt{Function}.
-  \item Substitution — swap monolithic attention for an unfolded
-        version with named submodules (\texttt{qk\_scores}, \texttt{softmax},
-        \texttt{context}, \texttt{*\_lrp\_probe}, \ldots).\\
-        Required because per-tensor rules cannot attach to a single
-        monolithic \texttt{Attention.forward}.
-\end{itemize}
-
-\centering Both types are reversible.
-\end{frame}
-
-% ═══════════════════════════════════════════════════════════════════════════
-\section[Composite]{Composite}
-% ═══════════════════════════════════════════════════════════════════════════
-
-\begin{frame}{Composite}
-\centering\large
-\texttt{AttnLRPCombinedComposite($\alpha{=}0.5,\beta{=}0.5$, residual\_lrp='ratio', layerscale\_uniform=True)}
-
-\vspace{6mm}
-\begin{itemize}
-  \item Linear / Conv $\to$ $\eps$-LRP
-  \item LayerNorm, GELU, softmax, scale $\to$ Identity rule
-  \item All bilinears $\to$ AlphaBeta($0.5, 0.5$)
-  \item Residual adds $\to$ Otsuki ratio
-  \item LayerScale $\to$ uniform $\half$
-  \item Attention $\to$ unfolded substitution (timm + Eva, both always-on)
-\end{itemize}
-
-\centering One call activates everything. Any supported ViT (Eva DINOv3, timm \texttt{vit\_base}, our \texttt{vit\_small})
-receives the same validated recipe.
-\end{frame}
-
-% ═══════════════════════════════════════════════════════════════════════════
 \section[Concepts]{Concepts}
 % ═══════════════════════════════════════════════════════════════════════════
 
@@ -557,28 +506,6 @@ on DINOv3; \texttt{slice(5, None)} = spatial patches only).
 
 Question: ``did this cls / register / patch position drive the prediction?''\\
 DINOv3 register tokens~\cite{darcet2024dinov3}: 4 ``signal-sinks'' separate from cls.
-\end{frame}
-
-\begin{frame}{One attribution trace}
-\textbf{User runs}\\[1mm]
-\centering\small\texttt{attribution(x, [\{"y":[c], $\ell$:[$h$]\}], composite, mask\_map=HeadConcept.mask)}\\[3mm]
-
-\raggedright
-\begin{enumerate}
-  \item Composite \texttt{context} enters $\Rightarrow$ canonizers apply,
-        attention is unfolded, every named submodule has its rule wired.
-  \item Forward pass through the model on input $x$.
-  \item \texttt{HeadConcept.mask} zeros every head $\neq h$ in the
-        relevance flowing back from logit $y$.
-  \item Backward through:
-        \begin{itemize}
-          \item \texttt{context} (AlphaBeta) $\to$ \texttt{softmax} (identity) $\to$ \texttt{qk\_scores} (AlphaBeta)
-          \item \texttt{rope\_q/k}, \texttt{q\_norm/k\_norm} ($\eps$-LRP)
-          \item Residuals (ratio split), LayerScale (uniform $\half$).
-        \end{itemize}
-  \item Result: per-pixel relevance for exactly this head at exactly this block.
-  \item \texttt{context} exits $\Rightarrow$ canonizers remove, model back to vanilla.
-\end{enumerate}
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -665,40 +592,46 @@ vit\_small (ViT-S/16, 12 blocks, 22 M)   & timm standard
 \toprule
 Dataset & train-val acc & test acc & Interpretation \\
 \midrule
-dSprites      & $0.999$ & $0.999$ & 3-class shape task — trivial; ceiling. \\
-FunnyBirds    & (in progress) & — & 50-class part-based; ImageNet recipe (RandAug + Mixup + label smoothing + cosine + LLRD). \\
-ColoredMNIST  & $0.978$ & $0.127$ & intentionally biased: model learned colour shortcut. Train-val high, test near chance. \\
+dSprites      & $0.999$ & $0.999$ & 3-class shape task — ceiling. \\
+FunnyBirds    & $0.972$ & $0.984$ & 50-class part-based; OneCycle in 25 epochs. \\
+ColoredMNIST  & $0.978$ & $0.127$ & intentionally biased — colour shortcut. \\
 \bottomrule
 \end{tabular}
 
 \vspace{4mm}
 \begin{itemize}
-  \item ColoredMNIST is the deliverable bias probe — we know the
-        model's failure mode (colour, not shape). XAI heatmaps should
-        light up colour-bearing pixels, not stroke geometry. If they
-        don't, the method is mis-identifying the cause of the prediction.
-  \item The other two are sanity-checks: known parts (FunnyBirds), known
-        shape pixels (dSprites). Heatmaps should align with the ground
-        truth.
+  \item ColoredMNIST is the deliverable bias probe — known failure
+        mode (colour, not shape). XAI heatmaps should light up
+        colour-bearing pixels, not stroke geometry; otherwise the
+        method is mis-identifying the cause of the prediction.
+  \item The other two are sanity-checks: known parts (FunnyBirds),
+        known shape pixels (dSprites). Heatmaps should align with the
+        ground truth.
 \end{itemize}
 \end{frame}
 
 \begin{frame}{Cross-check XAI baselines}
-We ship the trained \texttt{vit\_small} with two published baseline methods
-for manual sanity checking before applying CRP:
+Both baselines hook the post-softmax attention weight tensor
+$A \in \reals^{B \times H \times N \times N}$ and compute $\partial y / \partial A$.
 
-\begin{itemize}
-  \item LeGrad~\cite{bousselham2024legrad} — gradient of the
-        prediction w.r.t.\ attention weights; aggregated per block.
-  \item Chefer's rollout~\cite{chefer2021transformer} — per-block
-        $(\mathrm{grad} \odot A)_+$ averaged over heads, rolled up across
-        blocks via $R \leftarrow R + R_\mathrm{block} R$.
-\end{itemize}
+\begin{block}{LeGrad~\cite{bousselham2024legrad}}
+\[
+  s^{(\ell)} \;=\; \mathrm{mean}_h\!\bigl[(\nabla\!_{\!A^{(\ell)}}\, y\;\odot\; A^{(\ell)})_+\bigr]_{\,\mathrm{cls},\, \mathrm{patches}}
+  \qquad
+  \mathrm{heatmap} \;=\; \sum_{\ell \in \mathit{target}} s^{(\ell)}
+\]
+\end{block}
 
-\centering Both hook the post-softmax attention weight tensor.\\
-No composite needed — they are stock-model methods.
-The walkthrough notebook runs them next to our AttnLRP / CRP attributions on the same focal image,
-so the user can compare the three approaches visually.
+\begin{block}{Chefer's rollout~\cite{chefer2021transformer}}
+\[
+  R^{(\ell)} \;=\; \mathrm{mean}_h\!\bigl[(\nabla\!_{\!A^{(\ell)}}\, y\;\odot\; A^{(\ell)})_+\bigr],
+  \qquad
+  R \;\leftarrow\; R + R^{(\ell)} R \quad (R_0 = I)
+\]
+\end{block}
+
+Same atomic ingredient; the only difference is the aggregation —
+LeGrad averages, Chefer accumulates via matmul rollup.
 \end{frame}
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -708,12 +641,13 @@ so the user can compare the three approaches visually.
 \begin{frame}[plain]{}
 \centering
 \vfill
-{\Huge Notebook walkthroughs \\[6mm]
-\large\texttt{tutorials/vit\_crp/walkthrough.ipynb}\\[2mm]
-\small the AttnLRP+CRP recipe, 3 concepts $\times$ 4 sites, cascade\\[4mm]
-\large\texttt{tutorials/vit\_crp/vit\_small\_baselines.ipynb}\\[2mm]
-\small \texttt{vit\_small} on the 3 datasets, LeGrad + Chefer baselines
-}
+{\Huge Notebook walkthroughs}
+\vfill
+{\large\texttt{tutorials/vit\_crp/walkthrough.ipynb}\\[1mm]
+\small AttnLRP + CRP, three concepts $\times$ four sites, cascade}
+\vspace{6mm}\\
+{\large\texttt{tutorials/vit\_crp/vit\_small\_baselines.ipynb}\\[1mm]
+\small \texttt{vit\_small} training cells, LeGrad and Chefer baselines}
 \vfill
 \end{frame}
 
